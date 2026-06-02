@@ -973,7 +973,9 @@ pub fn draw_text(canvas: &Canvas, text: &TextElement, md: &MasterData) {
         }
         canvas.scale((op.scale_x, 1.0));
         if op.rotate_deg.abs() > 0.001 {
-            canvas.rotate(op.rotate_deg, None);
+            // TMP <rotate> 是 Unity Y-up/CCW 角度，Skia 是 Y-down/CW，需取负翻转，
+            // 与元素级旋转 transform::quaternion_to_degrees 的负号同源。漏翻则字反向 180°。
+            canvas.rotate(-op.rotate_deg, None);
         }
         if let Some(ref sdf_p) = op.sdf_params {
             let fc = op.face.color4f();
