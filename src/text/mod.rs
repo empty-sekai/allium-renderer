@@ -543,7 +543,11 @@ pub fn draw_text(canvas: &Canvas, text: &TextElement, md: &MasterData) {
     let total_h_tmp = effective_max_asc - effective_min_des;
     let _total_h = total_h_tmp / TEXT_SCALE;
     // anchor 基于 logical box 居中（TMP 行为：首行 asc + 末行 des）。
-    let anchor_base = (logical_max_asc + logical_min_des) / (2.0 * TEXT_SCALE);
+    // Use the effective vertical bounds (which include voffset) so that
+    // the visual centre of the text box is at the origin. When voffset=0
+    // the effective bounds equal the logical bounds, so this is a no-op
+    // for text without <voffset>.
+    let anchor_base = (effective_max_asc + effective_min_des) / (2.0 * TEXT_SCALE);
     let has_outline = text.outline_size > 0.0;
     let max_rw = rect_widths.iter().cloned().fold(0.0f32, f32::max);
     const PAD_ORIGINAL: f32 = 64.0 / TEXT_SCALE;
