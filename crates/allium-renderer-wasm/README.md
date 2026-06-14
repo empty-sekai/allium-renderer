@@ -117,7 +117,6 @@ npm run build:ts     # tsc 编译 wrapper
 
 ## 许可
 
-AGPL-3.0-only，附**浏览器范围 linking exception**（见 `LICENSE-EXCEPTION`）：
-未修改的本制品在浏览器网页中运行时，与你的前端代码在浏览器内链接不使前端代码
-受 AGPL 传染。修改引擎或在服务端/非浏览器环境运行，则适用完整 AGPL（含 §13
-网络使用源码披露义务）。
+AGPL-3.0-only，附浏览器范围 linking exception（见 `LICENSE-EXCEPTION`）：
+未修改的本制品在浏览器网页中运行时，前端代码不受 AGPL 传染。
+修改引擎或非浏览器环境适用完整 AGPL（含 §13 网络使用源码披露义务）。
