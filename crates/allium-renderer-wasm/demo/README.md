@@ -48,9 +48,13 @@ headers.
 | Dynamic asset URL | Card art, stamps, thumbnails (change per game version). The demo fetches `<dynamic-url>/<key>.png`. |
 | Static asset URL | Frames, icons, badges, masks (ship with the engine). The demo fetches `<static-url>/<key>.png`. May point at the same host as dynamic. |
 
-Which keys are static vs dynamic is decided by the key's first path
-segment (`card/`, `honor/`, `general/`, `sprite/`, `ui/`,
-`chara_avatar/`, `mysekai/` are static; everything else is dynamic).
+Which keys are static vs dynamic is decided by an embedded manifest
+(`static-manifest.js`) listing the engine-shipped assets — frames, icons,
+masks, badges. A key in the manifest is fetched from the static URL;
+every other key is a dynamic, per-version game asset from the dynamic
+URL. The split is *not* by first path segment: a prefix like `honor/`
+holds both static frames (`honor/frame_degree_*`) and dynamic artwork
+(`honor/<abn>/degree_*`), so only the manifest can tell them apart.
 
 Nothing is bundled. No URL is hardcoded. The demo is meant as a
 reference for wiring `@empty-sekai/renderer-wasm` into a host page — you can

@@ -16,6 +16,7 @@
 // The base must serve /masterdata and /assets with CORS enabled.
 
 import { AlliumWorkerClient } from "../dist/worker-client.js";
+import { isStaticKey } from "./static-manifest.js";
 
 // ── Constants ──
 
@@ -46,20 +47,10 @@ const REQUIRED_TABLES = [
   "unitStoryEpisodeGroups",
 ];
 
-// Asset keys whose first path segment is one of these are static assets
-// (frames, icons, badges, masks) that ship with the engine and are
-// fetched from the static-asset URL. Every other key is a dynamic game
-// asset fetched from the dynamic-asset URL.
-// Mirrors the static asset tree shipped with the engine.
-const STATIC_ASSET_PREFIXES = new Set([
-  "card",
-  "chara_avatar",
-  "general",
-  "honor",
-  "mysekai",
-  "sprite",
-  "ui",
-]);
+// Asset routing: a key is static (engine-shipped frame/icon/mask/badge)
+// iff it appears in the embedded static manifest, otherwise it is a dynamic
+// per-version game asset. See static-manifest.js — the split cannot be done
+// by first path segment because mixed prefixes such as honor/ hold both.
 
 // File-name → font family aliases for the FOT fonts shipped with the
 // game. masterdata's customProfileTextFonts table references both the
@@ -244,13 +235,12 @@ async function fetchAssets(client, cardJsons, masterData, dynamicUrl, staticUrl,
 
   // Asset keys fall into two namespaces, each with its own base URL:
   //  - static assets (frames, icons, badges, masks) ship with the engine
-  //    and don't change; their key's first path segment is in
-  //    STATIC_ASSET_PREFIXES.
+  //    and don't change; they are listed in the embedded static manifest.
   //  - dynamic assets (card art, stamps, thumbnails) change per game
   //    version. Both URLs are plain prefixes — the key (plus .png) is
   //    appended verbatim, no region/path segments are inserted.
   const assetUrl = (key) =>
-    STATIC_ASSET_PREFIXES.has(key.split("/", 1)[0])
+    isStaticKey(key)
       ? `${staticUrl}/${key}.png`
       : `${dynamicUrl}/${key}.png`;
 

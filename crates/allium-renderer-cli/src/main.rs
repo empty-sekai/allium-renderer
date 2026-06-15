@@ -14,6 +14,7 @@
 
 mod fetch;
 mod serve;
+mod static_manifest;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -54,8 +55,8 @@ render-card：自定义名片渲染 CLI
   --serve                常驻模式
 
 素材 URL 为纯前缀，程序只在后面接 /<key>.png，不插入 region/assets 等子路径。
-key 第一段命中 card/chara_avatar/general/honor/mysekai/sprite/ui 走 --static-url，
-其余走 --assets-url。
+key 命中内嵌静态清单（引擎自带的边框/图标/遮罩等）走 --static-url，其余走
+--assets-url。注意不能按首段前缀划分：honor/ 等前缀同时含静态边框与动态图。
 ";
 
 struct Args {

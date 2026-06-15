@@ -2,7 +2,9 @@
 //!
 //! 三个 URL 各自是纯前缀，程序只在后面接 `/<table>.json` 或 `/<key>.png`，
 //! 不插入 region / latest / assets 等任何约定子路径——兼容任意镜像布局。
-//! 素材按 key 第一段前缀分流到「静态」或「动态」URL（与 demo 同款划分）。
+//! 素材按内嵌静态清单分流：key 命中 `static_manifest` 走「静态」URL，否则
+//! 走「动态」URL。不能按首段前缀划分——`honor/` 等前缀既含静态边框
+//! （`honor/frame_degree_*`）又含动态图（`honor/<abn>/degree_*`）。
 //!
 //! HTTP 走同步 `ureq`，并发由标准库线程池承担，每个请求带指数退避重试。
 
@@ -13,27 +15,12 @@ use std::sync::Arc;
 use allium_renderer::assets::AssetStore;
 use allium_renderer_host::REQUIRED_TABLES;
 
-/// 静态素材前缀：key 第一段命中则走 `--static-url`，否则走 `--assets-url`。
-/// 与 demo 的 `STATIC_ASSET_PREFIXES` 保持一致。
-const STATIC_ASSET_PREFIXES: &[&str] = &[
-    "card",
-    "chara_avatar",
-    "general",
-    "honor",
-    "mysekai",
-    "sprite",
-    "ui",
-];
+use crate::static_manifest::is_static_key;
 
 /// 单个请求的重试次数（首次 + 重试），指数退避。
 const MAX_ATTEMPTS: u32 = 4;
 /// 并发拉取素材的线程数。
 const CONCURRENCY: usize = 8;
-
-fn is_static_key(key: &str) -> bool {
-    let head = key.split('/').next().unwrap_or("");
-    STATIC_ASSET_PREFIXES.contains(&head)
-}
 
 /// 去掉 URL 尾部斜杠，便于拼接。
 fn trim_base(url: &str) -> &str {
