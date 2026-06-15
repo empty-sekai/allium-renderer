@@ -5,10 +5,12 @@ mod geometry;
 
 use std::collections::HashMap;
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use freetype::{face::LoadFlag, Library, RenderMode};
+use lru::LruCache;
 use ttf_parser::Face as TtfFace;
 
 use self::geometry::{
@@ -129,6 +131,13 @@ fn font_path_cache() -> &'static Mutex<HashMap<String, Option<PathBuf>>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// SDF glyph 缓存容量（条目数上限）。
+///
+/// 8 个字体 family × 常用 CJK/假名/拉丁字符集，4096 条目 ~25 MB，
+/// 远小于无界 HashMap 的数百 MB 增长风险——`--serve` 常驻模式下 glyph
+/// 缓存跨请求保留，无上限会随字符集累积无限增长。
+const GLYPH_CACHE_CAPACITY: usize = 4096;
+
 /// 内存注册字体表（family → 字体字节）。查找优先于文件系统路径，
 /// 供无文件系统环境（wasm）或想完全控制字体来源的宿主使用。
 fn font_registry() -> &'static Mutex<HashMap<String, Arc<Vec<u8>>>> {
@@ -142,7 +151,14 @@ pub fn register_font_bytes(family: &str, bytes: Vec<u8>) {
         registry.insert(family.to_string(), Arc::new(bytes));
     }
     if let Ok(mut cache) = glyph_cache().lock() {
-        cache.retain(|(cached_family, _), _| cached_family != family);
+        let stale: Vec<_> = cache
+            .iter()
+            .filter(|((cached_family, _), _)| cached_family == family)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in stale {
+            cache.pop(&key);
+        }
     }
     if let Ok(mut cache) = glyph_id_cache().lock() {
         cache.retain(|(cached_family, _), _| cached_family != family);
@@ -171,9 +187,13 @@ impl std::borrow::Borrow<[u8]> for FontData {
     }
 }
 
-fn glyph_cache() -> &'static Mutex<HashMap<(String, char), Arc<OutlineSdfGlyph>>> {
-    static CACHE: OnceLock<Mutex<HashMap<(String, char), Arc<OutlineSdfGlyph>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn glyph_cache() -> &'static Mutex<LruCache<(String, char), Arc<OutlineSdfGlyph>>> {
+    static CACHE: OnceLock<Mutex<LruCache<(String, char), Arc<OutlineSdfGlyph>>>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        Mutex::new(LruCache::new(
+            NonZeroUsize::new(GLYPH_CACHE_CAPACITY).expect("glyph cache capacity > 0"),
+        ))
+    })
 }
 
 fn font_bytes_cache() -> &'static Mutex<HashMap<PathBuf, Option<Arc<Vec<u8>>>>> {
@@ -273,7 +293,7 @@ pub fn lookup_or_generate(font_family: Option<&str>, ch: char) -> Option<Arc<Out
     if let Some(cached) = glyph_cache()
         .lock()
         .ok()
-        .and_then(|cache| cache.get(&key).cloned())
+        .and_then(|mut cache| cache.get(&key).cloned())
     {
         return Some(cached);
     }
@@ -287,7 +307,7 @@ pub fn lookup_or_generate(font_family: Option<&str>, ch: char) -> Option<Arc<Out
     };
     let glyph = Arc::new(glyph);
     if let Ok(mut cache) = glyph_cache().lock() {
-        cache.insert(key, glyph.clone());
+        cache.put(key, glyph.clone());
     }
     Some(glyph)
 }
