@@ -399,7 +399,16 @@ pub fn draw_text(canvas: &Canvas, text: &TextElement, md: &MasterData) {
             let mut measured = 0.0f32;
             for ch in &part_chars {
                 let (display, char_scale) = transform_char_for_segment(*ch, seg);
-                let glyph_hadv_tmp_layout = tmp_measure_advance(&display, &seg_font, measure_size)
+                // advance 优先用 FreeType（与 TMP FontEngine 同源，真机 truth 已验证），
+                // Skia measure_str 对半角符号（如 `)`）advance 偏小约 10%，导致 cspace 画弧层
+                // 字符间距偏小、弧形变形。回退 Skia 仅用于 SDF 未覆盖字符。
+                let ft_hadv = lookup_or_generate(resolved_name_ref, *ch)
+                    .as_ref()
+                    .map(|g| g.plane_advance_x() * (measure_size / sdf_outline::sampling_point_size()))
+                    .filter(|v| *v > 0.0);
+                let glyph_hadv_tmp_layout = (ft_hadv.unwrap_or_else(|| {
+                    tmp_measure_advance(&display, &seg_font, measure_size)
+                }))
                     * char_scale
                     * TEXT_SCALE;
                 measured += glyph_hadv_tmp_layout * seg_scale / TEXT_SCALE;
@@ -927,7 +936,10 @@ pub fn draw_text(canvas: &Canvas, text: &TextElement, md: &MasterData) {
                 if mono_cell > 0.0 {
                     cursor_x += mono_cell + cspace_px;
                 } else {
-                    cursor_x += ch_advance * effective_scale + cspace_px;
+                    // cursor 推进用 FreeType advance（与真机 TMP FontEngine 同源），
+                    // Skia measure_str 对半角符号 advance 偏小，会导致 cspace 画弧层间距偏小。
+                    let adv = ft_advance_x.unwrap_or(ch_advance);
+                    cursor_x += adv * effective_scale + cspace_px;
                 }
             }
 
