@@ -2,7 +2,7 @@
 name = "allium-renderer"
 version = "0.1.0"
 edition = "2021"
-description = "Skia CPU rendering engine: Renderable trait + render executor"
+description = "Skia CPU rendering engine: scene-graph interpreter for game cards and WidgetDocument info-graphics"
 license = "AGPL-3.0-only"
 
 [dependencies]
@@ -12,7 +12,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 lru = "0.12"
 rayon = { version = "1.11", optional = true }
-tokio = { version = "1.43", features = ["sync", "rt", "time"], optional = true }
 chrono = { version = "0.4", optional = true }
 skia-safe = { version = "0.97", optional = true }
 freetype-rs = { version = "0.38", optional = true }
@@ -36,7 +35,6 @@ skia = [
     "skia-core",
     "parallel",
     "scenes",
-    "executor",
     "skia-safe/textlayout",
     "skia-safe/svg",
     "skia-safe/vulkan",
@@ -48,8 +46,6 @@ skia-minimal = ["skia-core", "skia-safe/webp"]
 parallel = ["dep:rayon"]
 # 非名片场景：ranking / mysekai_harvest / personal_profile。
 scenes = ["dep:chrono"]
-# 已弃用的 RenderExecutor（tokio + rayon 线程池示例）。
-executor = ["dep:tokio", "dep:rayon", "scenes"]
 dev = ["skia", "dep:tracing-subscriber"]
 
 [[example]]
