@@ -466,6 +466,43 @@ mod tests {
     }
 
     #[test]
+    fn widget_node_round_trip_panel() {
+        let n = node(
+            "panel",
+            NodeKind::Panel {
+                width: 240.0,
+                height: 120.0,
+                radius: 8.0,
+                fill: sample_color(),
+                border: Some(Color::new(0.0, 0.0, 0.0, 1.0)),
+                border_width: 1.5,
+            },
+        );
+
+        let json = serde_json::to_string(&n).expect("序列化 panel 失败");
+        let decoded: WidgetNode = serde_json::from_str(&json).expect("反序列化 panel 失败");
+        assert_eq!(decoded, n);
+    }
+
+    #[test]
+    fn widget_node_round_trip_asset_image() {
+        let n = node(
+            "img",
+            NodeKind::AssetImage {
+                asset_key: "presets/mysekai/item_1.png".to_string(),
+                width: 128.0,
+                height: 64.0,
+                fit: crate::widgets::image::AssetImageFit::Contain,
+                radius: 4.0,
+            },
+        );
+
+        let json = serde_json::to_string(&n).expect("序列化 asset_image 失败");
+        let decoded: WidgetNode = serde_json::from_str(&json).expect("反序列化 asset_image 失败");
+        assert_eq!(decoded, n);
+    }
+
+    #[test]
     fn widget_node_round_trip_stats_badge() {
         let n = node(
             "stats",

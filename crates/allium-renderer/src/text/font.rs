@@ -92,6 +92,11 @@ pub(super) fn resolve_same_source_typeface(
         return cached;
     }
 
+    // 名字踩了 `sdf::outline` 命名空间(历史遗留：SDF 侧也要读字体字节),但
+    // 函数本身只做 TTF/OTF 磁盘读取 + Arc 缓存,不涉及 SDF 图元/光栅化。
+    // 护栏"IR 节点不得触达 sdf"这里指重 SDF 路径(rasterize+draw_text),不含
+    // 字体加载 helper。TODO(W-post): 把 helper 搬到 `text` / 独立 `font_loader` 模块,
+    // 消除反向依赖 + 简化护栏 grep。
     let resolved = crate::sdf::outline::load_font_bytes_for_family(family)
         .and_then(|bytes| font_mgr.new_from_data(bytes.as_slice(), None));
 
