@@ -1,6 +1,10 @@
 //! WidgetNode 到 `Box<dyn Widget>` 的实例化适配层。
+//!
+//! v2 结构下 `id`/`position`/`visible` 已提到外层，本层只关心 `kind`；
+//! Container 变体本身不需要 widget（`render_document::measure_container` /
+//! `draw_node` 分支处理），保留 `ContainerWidget` 只是给旧调用路径兜底。
 
-use crate::widget_node::{Layout, TextAlignValue, VAlignValue, WidgetNode};
+use crate::widget_node::{Layout, NodeKind, TextAlignValue, VAlignValue, WidgetNode};
 use crate::widgets::adapters::general::GeneralWidget;
 use crate::widgets::card_thumbnail::CardThumbnail;
 use crate::widgets::glass_panel::GlassPanel;
@@ -13,12 +17,12 @@ use crate::widgets::Widget;
 
 /// 将 WidgetNode 转换为 `Box<dyn Widget>`。
 pub fn instantiate(node: &WidgetNode) -> Box<dyn Widget> {
-    match node {
-        WidgetNode::Container { id, layout, .. } => Box::new(ContainerWidget {
-            id: id.clone(),
+    match &node.kind {
+        NodeKind::Container { layout, .. } => Box::new(ContainerWidget {
+            id: node.id.clone(),
             layout: layout.clone(),
         }),
-        WidgetNode::CardThumbnail {
+        NodeKind::CardThumbnail {
             size,
             card_image_key,
             rarity,
@@ -27,7 +31,6 @@ pub fn instantiate(node: &WidgetNode) -> Box<dyn Widget> {
             trained,
             show_info,
             level_text,
-            ..
         } => Box::new(CardThumbnail {
             size: *size,
             card_image_key: card_image_key.clone(),
@@ -38,24 +41,22 @@ pub fn instantiate(node: &WidgetNode) -> Box<dyn Widget> {
             show_info: *show_info,
             level_text: level_text.clone(),
         }),
-        WidgetNode::GlassPanel {
+        NodeKind::GlassPanel {
             width,
             height,
             clip_variance,
-            ..
         } => Box::new(GlassPanel {
             width: *width,
             height: *height,
             clip_variance: *clip_variance,
         }),
-        WidgetNode::Panel {
+        NodeKind::Panel {
             width,
             height,
             radius,
             fill,
             border,
             border_width,
-            ..
         } => Box::new(Panel {
             width: *width,
             height: *height,
@@ -64,13 +65,12 @@ pub fn instantiate(node: &WidgetNode) -> Box<dyn Widget> {
             border: *border,
             border_width: *border_width,
         }),
-        WidgetNode::AssetImage {
+        NodeKind::AssetImage {
             asset_key,
             width,
             height,
             fit,
             radius,
-            ..
         } => Box::new(AssetImage {
             asset_key: asset_key.clone(),
             width: *width,
@@ -78,7 +78,7 @@ pub fn instantiate(node: &WidgetNode) -> Box<dyn Widget> {
             fit: *fit,
             radius: *radius,
         }),
-        WidgetNode::SimpleText {
+        NodeKind::SimpleText {
             content,
             font_size,
             color,
@@ -89,7 +89,6 @@ pub fn instantiate(node: &WidgetNode) -> Box<dyn Widget> {
             padding,
             line_height,
             glow,
-            ..
         } => Box::new(SimpleText {
             text: content.clone(),
             size: *font_size,
@@ -102,29 +101,27 @@ pub fn instantiate(node: &WidgetNode) -> Box<dyn Widget> {
             line_height: *line_height,
             glow: *glow,
         }),
-        WidgetNode::StatsBadge {
+        NodeKind::StatsBadge {
             label,
             value,
             color,
             is_highlight,
-            ..
         } => Box::new(StatsBadge {
             label: label.clone(),
             value: value.clone(),
             color: *color,
             is_highlight: *is_highlight,
         }),
-        WidgetNode::TextBadge {
+        NodeKind::TextBadge {
             text,
             bg_color,
             text_color,
-            ..
         } => Box::new(TextBadge {
             text: text.clone(),
             bg_color: *bg_color,
             text_color: *text_color,
         }),
-        WidgetNode::ProfileGeneral { general_type, .. } => {
+        NodeKind::ProfileGeneral { general_type } => {
             Box::new(GeneralWidget::from_general_type(*general_type))
         }
     }
@@ -161,7 +158,7 @@ impl Widget for ContainerWidget {
         (0.0, 0.0)
     }
 
-    #[cfg(feature = "skia-core")]
+    #[cfg(feature = "skia")]
     fn draw(
         &self,
         _canvas: &skia_safe::Canvas,
@@ -175,81 +172,106 @@ impl Widget for ContainerWidget {
 #[cfg(test)]
 mod tests {
     use super::instantiate;
-    use crate::widget_node::{Layout, TextAlignValue, VAlignValue, WidgetNode};
+    use crate::widget_node::{Layout, NodeKind, Position, TextAlignValue, VAlignValue, WidgetNode};
     use crate::widgets::theme::Color;
+
+    fn node(id: &str, kind: NodeKind) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            position: Position::default(),
+            visible: true,
+            kind,
+        }
+    }
 
     #[test]
     fn instantiate_returns_correct_names_for_all_variants() {
         let nodes = vec![
-            WidgetNode::Container {
-                id: "root".to_string(),
-                layout: Layout::Absolute,
-                children: Vec::new(),
-            },
-            WidgetNode::CardThumbnail {
-                id: "card".to_string(),
-                size: 156.0,
-                card_image_key: "card/1".to_string(),
-                rarity: "rarity_4".to_string(),
-                attr: "cool".to_string(),
-                master_rank: 1,
-                trained: false,
-                show_info: true,
-                level_text: "Lv.1".to_string(),
-            },
-            WidgetNode::GlassPanel {
-                id: "glass".to_string(),
-                width: 100.0,
-                height: 40.0,
-                clip_variance: 0.0,
-            },
-            WidgetNode::Panel {
-                id: "panel".to_string(),
-                width: 100.0,
-                height: 40.0,
-                radius: 4.0,
-                fill: Color::new(1.0, 1.0, 1.0, 1.0),
-                border: None,
-                border_width: 0.0,
-            },
-            WidgetNode::AssetImage {
-                id: "image".to_string(),
-                asset_key: "img/key".to_string(),
-                width: 64.0,
-                height: 64.0,
-                fit: crate::widgets::image::AssetImageFit::Cover,
-                radius: 4.0,
-            },
-            WidgetNode::SimpleText {
-                id: "text".to_string(),
-                content: "hello".to_string(),
-                font_size: 18.0,
-                color: Color::new(1.0, 1.0, 1.0, 1.0),
-                width: 260.0,
-                height: 72.0,
-                align: TextAlignValue::Left,
-                v_align: VAlignValue::Top,
-                padding: 4.0,
-                line_height: 1.2,
-                glow: false,
-            },
-            WidgetNode::StatsBadge {
-                id: "stats".to_string(),
-                label: "L".to_string(),
-                value: "V".to_string(),
-                color: Color::new(1.0, 0.0, 0.0, 1.0),
-                is_highlight: false,
-            },
-            WidgetNode::TextBadge {
-                id: "badge".to_string(),
-                text: "TAG".to_string(),
-                bg_color: Color::new(0.0, 0.0, 0.0, 1.0),
-                text_color: Color::new(1.0, 1.0, 1.0, 1.0),
-            },
-            WidgetNode::ProfileGeneral {
-                id: "profile_name".to_string(),
-                general_type: 13,
-            },
+            node(
+                "root",
+                NodeKind::Container {
+                    layout: Layout::Absolute,
+                    children: Vec::new(),
+                },
+            ),
+            node(
+                "card",
+                NodeKind::CardThumbnail {
+                    size: 156.0,
+                    card_image_key: "card/1".to_string(),
+                    rarity: "rarity_4".to_string(),
+                    attr: "cool".to_string(),
+                    master_rank: 1,
+                    trained: false,
+                    show_info: true,
+                    level_text: "Lv.1".to_string(),
+                },
+            ),
+            node(
+                "glass",
+                NodeKind::GlassPanel {
+                    width: 100.0,
+                    height: 40.0,
+                    clip_variance: 0.0,
+                },
+            ),
+            node(
+                "panel",
+                NodeKind::Panel {
+                    width: 100.0,
+                    height: 40.0,
+                    radius: 4.0,
+                    fill: Color::new(1.0, 1.0, 1.0, 1.0),
+                    border: None,
+                    border_width: 0.0,
+                },
+            ),
+            node(
+                "image",
+                NodeKind::AssetImage {
+                    asset_key: "img/key".to_string(),
+                    width: 64.0,
+                    height: 64.0,
+                    fit: crate::widgets::image::AssetImageFit::Cover,
+                    radius: 4.0,
+                },
+            ),
+            node(
+                "text",
+                NodeKind::SimpleText {
+                    content: "hello".to_string(),
+                    font_size: 18.0,
+                    color: Color::new(1.0, 1.0, 1.0, 1.0),
+                    width: 260.0,
+                    height: 72.0,
+                    align: TextAlignValue::Left,
+                    v_align: VAlignValue::Top,
+                    padding: 4.0,
+                    line_height: 1.2,
+                    glow: false,
+                },
+            ),
+            node(
+                "stats",
+                NodeKind::StatsBadge {
+                    label: "L".to_string(),
+                    value: "V".to_string(),
+                    color: Color::new(1.0, 0.0, 0.0, 1.0),
+                    is_highlight: false,
+                },
+            ),
+            node(
+                "badge",
+                NodeKind::TextBadge {
+                    text: "TAG".to_string(),
+                    bg_color: Color::new(0.0, 0.0, 0.0, 1.0),
+                    text_color: Color::new(1.0, 1.0, 1.0, 1.0),
+                },
+            ),
+            node(
+                "profile_name",
+                NodeKind::ProfileGeneral { general_type: 13 },
+            ),
         ];
 
         let names = nodes

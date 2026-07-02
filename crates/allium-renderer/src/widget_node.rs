@@ -1,20 +1,33 @@
-//! WidgetDocument 与 WidgetNode 合约定义。
+//! WidgetDocument 与 WidgetNode 合约定义（schema v2）。
 //!
-//! 该模块定义前后端共享的最小文档合约：
-//! - 文档根 `WidgetDocument`
-//! - serde 标签化枚举 `WidgetNode`
-//! - 容器子节点 `ChildEntry`
-//! - 布局与定位模型
+//! 相较 v1（每个变体内嵌 `id`、`position`/`visible` 挂在 `ChildEntry`）：
+//! - `WidgetNode` 提层为具名 struct，`id`/`position`/`visible` 上移到外层。
+//! - 变体数据收进 `NodeKind`，`#[serde(tag = "type")]` 标签化。
+//! - `Container.children` 直接为 `Vec<WidgetNode>`，`ChildEntry` 删除。
+//!
+//! JSON 形状示例：
+//! ```json
+//! {
+//!   "id": "root",
+//!   "position": { "x": 0, "y": 0, "rotation": 0, "scale": [1, 1] },
+//!   "visible": true,
+//!   "kind": { "type": "container", "layout": "absolute", "children": [ ... ] }
+//! }
+//! ```
+//! 消费端一次性迁移到 v2，serde 不再兼容读 v1（历史 PG/前端 draft 由离线迁移程序转换）。
 
 use serde::{Deserialize, Serialize};
 
 use crate::widgets::image::AssetImageFit;
 use crate::widgets::theme::Color;
 
+/// 当前 schema 版本。历史 v1 数据须离线迁移到 v2；serde 不做兼容读。
+pub const WIDGET_DOCUMENT_SCHEMA_VERSION: u32 = 2;
+
 /// Widget 文档根。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WidgetDocument {
-    /// Schema 版本号。
+    /// Schema 版本号（v2 起 = [`WIDGET_DOCUMENT_SCHEMA_VERSION`]）。
     pub version: u32,
     /// 画布规格。
     pub canvas: CanvasSpec,
@@ -47,23 +60,47 @@ pub enum OutputFormat {
     Webp(u8),
 }
 
-/// Widget 场景树节点。
+/// Widget 场景树节点（v2）。
+///
+/// `id`/`position`/`visible` 是所有节点共有的定位/可见性字段，
+/// 具体形状与参数放到 `kind`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WidgetNode {
+    /// 节点稳定 ID。
+    pub id: String,
+    /// 节点在父容器坐标系下的定位。缺省视为 [`Position::default`]（左上原点、无旋转/缩放）。
+    #[serde(default)]
+    pub position: Position,
+    /// 是否可见。缺省 `true`；`false` 跳过渲染。
+    #[serde(default = "default_visible")]
+    pub visible: bool,
+    /// 节点具体形状与参数。
+    pub kind: NodeKind,
+}
+
+impl WidgetNode {
+    /// 返回节点类型名。
+    pub fn type_name(&self) -> &'static str {
+        self.kind.type_name()
+    }
+}
+
+/// 节点具体形状与参数（v2）。
+///
+/// `#[serde(tag = "type")]` 用外部标签化：JSON 形如
+/// `{ "type": "container", ... }`，与 v1 的枚举 tag 命名一致以便迁移工具复用。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum WidgetNode {
+pub enum NodeKind {
     /// 容器节点。
     Container {
-        /// 节点稳定 ID。
-        id: String,
         /// 容器布局。
         layout: Layout,
         /// 子节点列表。
-        children: Vec<ChildEntry>,
+        children: Vec<WidgetNode>,
     },
     /// 卡面缩略图节点。
     CardThumbnail {
-        /// 节点稳定 ID。
-        id: String,
         /// 缩略图尺寸。
         size: f32,
         /// 卡面素材 key。
@@ -83,8 +120,6 @@ pub enum WidgetNode {
     },
     /// 玻璃面板节点。
     GlassPanel {
-        /// 节点稳定 ID。
-        id: String,
         /// 宽度。
         width: f32,
         /// 高度。
@@ -94,8 +129,6 @@ pub enum WidgetNode {
     },
     /// 任意颜色圆角面板节点。
     Panel {
-        /// 节点稳定 ID。
-        id: String,
         /// 宽度。
         width: f32,
         /// 高度。
@@ -111,8 +144,6 @@ pub enum WidgetNode {
     },
     /// 素材图片节点。
     AssetImage {
-        /// 节点稳定 ID。
-        id: String,
         /// 素材 key。
         asset_key: String,
         /// 宽度。
@@ -128,11 +159,7 @@ pub enum WidgetNode {
     ///
     /// 显式 `width × height` 盒子 + `padding` + `(align, v_align)` + `line_height`
     /// 定位文字，与前端 WidgetPreview 像素对齐。
-    /// 旧 JSON 缺失新字段时通过 serde 默认值兼容（无 v_align/padding/line_height 时取
-    /// VAlignValue::Top / 4.0 / 1.2）。
     SimpleText {
-        /// 节点稳定 ID。
-        id: String,
         /// 文本内容。
         content: String,
         /// 字号（px）。
@@ -162,8 +189,6 @@ pub enum WidgetNode {
     },
     /// 指标标签节点。
     StatsBadge {
-        /// 节点稳定 ID。
-        id: String,
         /// 指标名称。
         label: String,
         /// 指标值。
@@ -175,8 +200,6 @@ pub enum WidgetNode {
     },
     /// 圆角文本标签节点。
     TextBadge {
-        /// 节点稳定 ID。
-        id: String,
         /// 标签文本。
         text: String,
         /// 背景色。
@@ -186,29 +209,12 @@ pub enum WidgetNode {
     },
     /// 平台个人资料的游戏 general 面板。
     ProfileGeneral {
-        /// 节点稳定 ID。
-        id: String,
         /// 游戏自定义名片 general 类型。
         general_type: i32,
     },
 }
 
-impl WidgetNode {
-    /// 返回节点稳定 ID。
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Container { id, .. }
-            | Self::CardThumbnail { id, .. }
-            | Self::GlassPanel { id, .. }
-            | Self::Panel { id, .. }
-            | Self::AssetImage { id, .. }
-            | Self::SimpleText { id, .. }
-            | Self::StatsBadge { id, .. }
-            | Self::TextBadge { id, .. }
-            | Self::ProfileGeneral { id, .. } => id.as_str(),
-        }
-    }
-
+impl NodeKind {
     /// 返回节点类型名。
     pub fn type_name(&self) -> &'static str {
         match self {
@@ -223,18 +229,6 @@ impl WidgetNode {
             Self::ProfileGeneral { .. } => "profile_general",
         }
     }
-}
-
-/// 容器子节点条目。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChildEntry {
-    /// 子节点在父容器中的定位。
-    pub position: Option<Position>,
-    /// 子节点本体。
-    pub node: WidgetNode,
-    /// 子节点可见性。None 视为 true；Some(false) 跳过渲染。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub visible: Option<bool>,
 }
 
 /// 节点定位信息。
@@ -258,6 +252,13 @@ impl Default for Position {
             rotation: 0.0,
             scale: (1.0, 1.0),
         }
+    }
+}
+
+impl Position {
+    /// 是否为默认值——H/V 流式布局中 position 应保持默认，否则报 `PositionIgnored`。
+    pub fn is_default(&self) -> bool {
+        self == &Position::default()
     }
 }
 
@@ -321,6 +322,9 @@ pub const SIMPLE_TEXT_DEFAULT_HEIGHT: f32 = 72.0;
 pub const SIMPLE_TEXT_DEFAULT_PADDING: f32 = 4.0;
 pub const SIMPLE_TEXT_DEFAULT_LINE_HEIGHT: f32 = 1.2;
 
+fn default_visible() -> bool {
+    true
+}
 fn default_simple_text_width() -> f32 {
     SIMPLE_TEXT_DEFAULT_WIDTH
 }
@@ -337,9 +341,9 @@ fn default_simple_text_line_height() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CanvasSpec, ChildEntry, Layout, OutputFormat, Position, TextAlignValue, VAlignValue,
+        CanvasSpec, Layout, NodeKind, OutputFormat, Position, TextAlignValue, VAlignValue,
         WidgetDocument, WidgetNode, SIMPLE_TEXT_DEFAULT_HEIGHT, SIMPLE_TEXT_DEFAULT_LINE_HEIGHT,
-        SIMPLE_TEXT_DEFAULT_PADDING, SIMPLE_TEXT_DEFAULT_WIDTH,
+        SIMPLE_TEXT_DEFAULT_PADDING, SIMPLE_TEXT_DEFAULT_WIDTH, WIDGET_DOCUMENT_SCHEMA_VERSION,
     };
     use crate::widgets::theme::Color;
 
@@ -347,85 +351,103 @@ mod tests {
         Color::new(1.0, 0.5, 0.0, 1.0)
     }
 
+    fn node(id: &str, kind: NodeKind) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            position: Position::default(),
+            visible: true,
+            kind,
+        }
+    }
+
     #[test]
     fn widget_node_round_trip_container() {
-        let node = WidgetNode::Container {
+        let n = WidgetNode {
             id: "root".to_string(),
-            layout: Layout::Horizontal { gap: 12.0 },
-            children: vec![ChildEntry {
-                position: Some(Position::default()),
-                node: WidgetNode::GlassPanel {
-                    id: "glass".to_string(),
-                    width: 120.0,
-                    height: 64.0,
-                    clip_variance: 0.2,
-                },
-                visible: None,
-            }],
+            position: Position::default(),
+            visible: true,
+            kind: NodeKind::Container {
+                layout: Layout::Horizontal { gap: 12.0 },
+                children: vec![node(
+                    "glass",
+                    NodeKind::GlassPanel {
+                        width: 120.0,
+                        height: 64.0,
+                        clip_variance: 0.2,
+                    },
+                )],
+            },
         };
 
-        let json = serde_json::to_string(&node).expect("序列化 container 失败");
+        let json = serde_json::to_string(&n).expect("序列化 container 失败");
         let decoded: WidgetNode = serde_json::from_str(&json).expect("反序列化 container 失败");
-        assert_eq!(decoded, node);
+        assert_eq!(decoded, n);
     }
 
     #[test]
     fn widget_node_round_trip_card_thumbnail() {
-        let node = WidgetNode::CardThumbnail {
-            id: "card".to_string(),
-            size: 156.0,
-            card_image_key: "cards/1".to_string(),
-            rarity: "rarity_4".to_string(),
-            attr: "cool".to_string(),
-            master_rank: 3,
-            trained: true,
-            show_info: true,
-            level_text: "Lv.60".to_string(),
-        };
+        let n = node(
+            "card",
+            NodeKind::CardThumbnail {
+                size: 156.0,
+                card_image_key: "cards/1".to_string(),
+                rarity: "rarity_4".to_string(),
+                attr: "cool".to_string(),
+                master_rank: 3,
+                trained: true,
+                show_info: true,
+                level_text: "Lv.60".to_string(),
+            },
+        );
 
-        let json = serde_json::to_string(&node).expect("序列化 card_thumbnail 失败");
+        let json = serde_json::to_string(&n).expect("序列化 card_thumbnail 失败");
         let decoded: WidgetNode =
             serde_json::from_str(&json).expect("反序列化 card_thumbnail 失败");
-        assert_eq!(decoded, node);
+        assert_eq!(decoded, n);
     }
 
     #[test]
     fn widget_node_round_trip_simple_text() {
-        let node = WidgetNode::SimpleText {
-            id: "text".to_string(),
-            content: "hello".to_string(),
-            font_size: 18.0,
-            color: sample_color(),
-            width: 200.0,
-            height: 60.0,
-            align: TextAlignValue::Center,
-            v_align: VAlignValue::Middle,
-            padding: 4.0,
-            line_height: 1.2,
-            glow: true,
-        };
+        let n = node(
+            "text",
+            NodeKind::SimpleText {
+                content: "hello".to_string(),
+                font_size: 18.0,
+                color: sample_color(),
+                width: 200.0,
+                height: 60.0,
+                align: TextAlignValue::Center,
+                v_align: VAlignValue::Middle,
+                padding: 4.0,
+                line_height: 1.2,
+                glow: true,
+            },
+        );
 
-        let json = serde_json::to_string(&node).expect("序列化 simple_text 失败");
+        let json = serde_json::to_string(&n).expect("序列化 simple_text 失败");
         let decoded: WidgetNode = serde_json::from_str(&json).expect("反序列化 simple_text 失败");
-        assert_eq!(decoded, node);
+        assert_eq!(decoded, n);
     }
 
     #[test]
-    fn widget_node_simple_text_legacy_json_compat() {
-        // 旧 JSON 没有 width/height/v_align/padding/line_height，应通过 serde 默认值反序列化。
-        let legacy_json = r#"{
-            "type": "simple_text",
-            "id": "old",
-            "content": "legacy",
-            "font_size": 16.0,
-            "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0 },
-            "align": "left",
-            "glow": false
+    fn widget_node_position_and_visible_default_when_absent() {
+        // v2 允许省略 position/visible；反序列化时取默认值。
+        let json = r#"{
+            "id": "text",
+            "kind": {
+                "type": "simple_text",
+                "content": "legacy",
+                "font_size": 16.0,
+                "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0 },
+                "align": "left",
+                "glow": false
+            }
         }"#;
-        let decoded: WidgetNode =
-            serde_json::from_str(legacy_json).expect("反序列化旧版 simple_text 失败");
-        match decoded {
-            WidgetNode::SimpleText {
+        let decoded: WidgetNode = serde_json::from_str(json).expect("反序列化 v2 缺省字段失败");
+        assert_eq!(decoded.position, Position::default());
+        assert!(decoded.visible);
+        match decoded.kind {
+            NodeKind::SimpleText {
                 width,
                 height,
                 v_align,
@@ -445,81 +467,87 @@ mod tests {
 
     #[test]
     fn widget_node_round_trip_stats_badge() {
-        let node = WidgetNode::StatsBadge {
-            id: "stats".to_string(),
-            label: "Score".to_string(),
-            value: "123".to_string(),
-            color: sample_color(),
-            is_highlight: true,
-        };
+        let n = node(
+            "stats",
+            NodeKind::StatsBadge {
+                label: "Score".to_string(),
+                value: "123".to_string(),
+                color: sample_color(),
+                is_highlight: true,
+            },
+        );
 
-        let json = serde_json::to_string(&node).expect("序列化 stats_badge 失败");
+        let json = serde_json::to_string(&n).expect("序列化 stats_badge 失败");
         let decoded: WidgetNode = serde_json::from_str(&json).expect("反序列化 stats_badge 失败");
-        assert_eq!(decoded, node);
+        assert_eq!(decoded, n);
     }
 
     #[test]
     fn widget_node_round_trip_text_badge() {
-        let node = WidgetNode::TextBadge {
-            id: "badge".to_string(),
-            text: "EVENT".to_string(),
-            bg_color: sample_color(),
-            text_color: Color::new(1.0, 1.0, 1.0, 1.0),
-        };
+        let n = node(
+            "badge",
+            NodeKind::TextBadge {
+                text: "EVENT".to_string(),
+                bg_color: sample_color(),
+                text_color: Color::new(1.0, 1.0, 1.0, 1.0),
+            },
+        );
 
-        let json = serde_json::to_string(&node).expect("序列化 text_badge 失败");
+        let json = serde_json::to_string(&n).expect("序列化 text_badge 失败");
         let decoded: WidgetNode = serde_json::from_str(&json).expect("反序列化 text_badge 失败");
-        assert_eq!(decoded, node);
+        assert_eq!(decoded, n);
     }
 
     #[test]
     fn widget_node_round_trip_profile_general() {
-        let node = WidgetNode::ProfileGeneral {
-            id: "profile_name".to_string(),
-            general_type: 13,
-        };
+        let n = node(
+            "profile_name",
+            NodeKind::ProfileGeneral { general_type: 13 },
+        );
 
-        let json = serde_json::to_string(&node).expect("序列化 profile_general 失败");
+        let json = serde_json::to_string(&n).expect("序列化 profile_general 失败");
         let decoded: WidgetNode =
             serde_json::from_str(&json).expect("反序列化 profile_general 失败");
-        assert_eq!(decoded, node);
+        assert_eq!(decoded, n);
     }
 
     #[test]
     fn widget_document_round_trip_with_nested_container() {
         let doc = WidgetDocument {
-            version: 1,
+            version: WIDGET_DOCUMENT_SCHEMA_VERSION,
             canvas: CanvasSpec {
                 width: 1080,
                 height: 1920,
                 background: Color::new(0.1, 0.1, 0.1, 1.0),
             },
-            root: WidgetNode::Container {
+            root: WidgetNode {
                 id: "root".to_string(),
-                layout: Layout::Absolute,
-                children: vec![ChildEntry {
-                    position: Some(Position {
-                        x: 32.0,
-                        y: 48.0,
-                        rotation: 0.0,
-                        scale: (1.0, 1.0),
-                    }),
-                    node: WidgetNode::Container {
+                position: Position::default(),
+                visible: true,
+                kind: NodeKind::Container {
+                    layout: Layout::Absolute,
+                    children: vec![WidgetNode {
                         id: "inner".to_string(),
-                        layout: Layout::Vertical { gap: 8.0 },
-                        children: vec![ChildEntry {
-                            position: None,
-                            node: WidgetNode::GlassPanel {
-                                id: "panel".to_string(),
-                                width: 200.0,
-                                height: 80.0,
-                                clip_variance: 0.0,
-                            },
-                            visible: None,
-                        }],
-                    },
-                    visible: None,
-                }],
+                        position: Position {
+                            x: 32.0,
+                            y: 48.0,
+                            rotation: 0.0,
+                            scale: (1.0, 1.0),
+                        },
+                        visible: true,
+                        kind: NodeKind::Container {
+                            layout: Layout::Vertical { gap: 8.0 },
+                            children: vec![node(
+                                "panel",
+                                NodeKind::GlassPanel {
+                                    width: 200.0,
+                                    height: 80.0,
+                                    clip_variance: 0.0,
+                                },
+                            )],
+                        },
+                    }],
+                },
             },
             output: OutputFormat::Png,
         };

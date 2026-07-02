@@ -4,8 +4,8 @@
 //! 左侧 Rank + 目标指标，右侧卡组数据芯片 + 固有指标块，显式展示卡牌养成与前后篇状态。
 
 use crate::widget_node::{
-    CanvasSpec, ChildEntry, Layout, OutputFormat, Position, TextAlignValue, VAlignValue,
-    WidgetDocument, WidgetNode,
+    CanvasSpec, Layout, NodeKind, OutputFormat, Position, TextAlignValue, VAlignValue,
+    WidgetDocument, WidgetNode, WIDGET_DOCUMENT_SCHEMA_VERSION,
 };
 use crate::widgets::card_util::{rarity_suffix, star_icon_key};
 use crate::widgets::image::AssetImageFit;
@@ -416,34 +416,38 @@ impl DeckResultCard {
         ));
 
         WidgetDocument {
-            version: 1,
+            version: WIDGET_DOCUMENT_SCHEMA_VERSION,
             canvas: CanvasSpec {
                 width: layout::page::CANVAS_W,
                 height: h.ceil() as u32,
                 background: pal::BG,
             },
-            root: WidgetNode::Container {
+            root: WidgetNode {
                 id: "root".into(),
-                layout: Layout::Absolute,
-                children,
+                position: Position::default(),
+                visible: true,
+                kind: NodeKind::Container {
+                    layout: Layout::Absolute,
+                    children,
+                },
             },
             output: OutputFormat::Jpeg(self.output_quality.unwrap_or(layout::page::OUTPUT_QUALITY)),
         }
     }
 }
 
-/// 构造 ChildEntry。
+/// 给节点打上父容器坐标系里的定位（v2：position 直接落在节点上）。
 ///
 /// **deck baseline 适配**：当 `node` 是 SimpleText 时，`(x, y)` 被解释为 **(锚点 x, baseline y)**
 /// （deck_result.rs 的 35 个 `_Y` 常量都是 baseline 语义，x 锚点按 align 不同含义不同）。
 /// 内部把锚点坐标转换为 SimpleText 盒子的 (top_left x, top y)。
 ///
-/// 前提：`text_align()` 构造的 SimpleText 固定 `padding=0`、`line_height=1.0`、`v_align=Top`，
-/// 此时 baseline 距盒子顶部偏移恒为 `fs * ASCENT_RATIO`，文字宽度在水平定位公式中代数抵消，
+/// 前提：`text_align()` 构造的 SimpleText 固定 `padding=0`、`line_height=1.0`、`v_align=Top`,
+/// 此时 baseline 距盒子顶部偏移恒为 `fs * ASCENT_RATIO`，文字宽度在水平定位公式中代数抵消,
 /// 不需要测量文本宽度。`debug_assert` 保证契约。
-fn entry(x: f32, y: f32, node: WidgetNode) -> ChildEntry {
-    let position = match &node {
-        WidgetNode::SimpleText {
+fn entry(x: f32, y: f32, mut node: WidgetNode) -> WidgetNode {
+    let position = match &node.kind {
+        NodeKind::SimpleText {
             font_size,
             align,
             width,
@@ -482,37 +486,46 @@ fn entry(x: f32, y: f32, node: WidgetNode) -> ChildEntry {
         }
         _ => pos(x, y),
     };
-    ChildEntry {
-        position,
-        node,
-        visible: None,
-    }
+    node.position = position;
+    node
 }
 
-fn auto(node: WidgetNode) -> ChildEntry {
-    ChildEntry {
-        position: None,
-        node,
-        visible: None,
-    }
+/// H/V 流式布局中的子节点——不设 position（由容器分配）。
+fn auto(node: WidgetNode) -> WidgetNode {
+    node
 }
 
-fn pos(x: f32, y: f32) -> Option<Position> {
-    Some(Position {
+fn pos(x: f32, y: f32) -> Position {
+    Position {
         x,
         y,
         rotation: 0.0,
         scale: (1.0, 1.0),
-    })
+    }
+}
+
+/// 构造 v2 叶子节点：设置 id + kind，position/visible 取默认值。
+fn leaf(id: impl Into<String>, kind: NodeKind) -> WidgetNode {
+    WidgetNode {
+        id: id.into(),
+        position: Position::default(),
+        visible: true,
+        kind,
+    }
+}
+
+/// 构造 v2 容器节点。
+fn container(id: impl Into<String>, layout: Layout, children: Vec<WidgetNode>) -> WidgetNode {
+    leaf(id, NodeKind::Container { layout, children })
 }
 
 /// 参数摘要 strip：header 与首行卡组之间的全宽玻璃条，左侧标签「参数」+ 右侧摘要文本。
 /// 展示本次组卡实际生效的参数（养成/顶配/火数/歌曲等），让用户在结果图上确认。
 fn param_strip(summary: &str) -> WidgetNode {
-    WidgetNode::Container {
-        id: "param_strip".into(),
-        layout: Layout::Absolute,
-        children: vec![
+    container(
+        "param_strip",
+        Layout::Absolute,
+        vec![
             entry(
                 0.0,
                 0.0,
@@ -557,16 +570,18 @@ fn param_strip(summary: &str) -> WidgetNode {
                 ),
             ),
         ],
-    }
+    )
 }
 
 fn glass(id: &str, w: f32, h: f32, variance: f32) -> WidgetNode {
-    WidgetNode::GlassPanel {
-        id: id.into(),
-        width: w,
-        height: h,
-        clip_variance: variance,
-    }
+    leaf(
+        id,
+        NodeKind::GlassPanel {
+            width: w,
+            height: h,
+            clip_variance: variance,
+        },
+    )
 }
 
 fn panel(
@@ -578,15 +593,17 @@ fn panel(
     border: Option<Color>,
     border_width: f32,
 ) -> WidgetNode {
-    WidgetNode::Panel {
-        id: id.into(),
-        width: w,
-        height: h,
-        radius,
-        fill,
-        border,
-        border_width,
-    }
+    leaf(
+        id,
+        NodeKind::Panel {
+            width: w,
+            height: h,
+            radius,
+            fill,
+            border,
+            border_width,
+        },
+    )
 }
 
 fn text(id: &str, content: impl Into<String>, size: f32, color: Color) -> WidgetNode {
@@ -611,30 +628,34 @@ fn text_align(
     //   - padding = 0, line_height = 1.0, v_align = Top：配合 entry() 的 baseline → top
     //     自动换算（详见 entry() 注释），保持历史 baseline 语义不变，业务代码零修改。
     let width = 9999.0_f32;
-    WidgetNode::SimpleText {
-        id: id.into(),
-        content,
-        font_size: size,
-        color,
-        width,
-        height: size * 2.0,
-        align,
-        v_align: VAlignValue::Top,
-        padding: 0.0,
-        line_height: 1.0,
-        glow,
-    }
+    leaf(
+        id,
+        NodeKind::SimpleText {
+            content,
+            font_size: size,
+            color,
+            width,
+            height: size * 2.0,
+            align,
+            v_align: VAlignValue::Top,
+            padding: 0.0,
+            line_height: 1.0,
+            glow,
+        },
+    )
 }
 
 fn image(id: &str, key: &str, w: f32, h: f32, fit: AssetImageFit, radius: f32) -> WidgetNode {
-    WidgetNode::AssetImage {
-        id: id.into(),
-        asset_key: key.into(),
-        width: w,
-        height: h,
-        fit,
-        radius,
-    }
+    leaf(
+        id,
+        NodeKind::AssetImage {
+            asset_key: key.into(),
+            width: w,
+            height: h,
+            fit,
+            radius,
+        },
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -699,7 +720,7 @@ fn target_metric(deck: &DeckRenderUnit, target: ResultTarget) -> (&'static str, 
     }
 }
 
-fn background_debris(_height: f32) -> Vec<ChildEntry> {
+fn background_debris(_height: f32) -> Vec<WidgetNode> {
     vec![entry(
         54.0,
         70.0,
@@ -785,11 +806,7 @@ fn header(h: Option<&DeckResultHeader>) -> WidgetNode {
         }
     }
 
-    WidgetNode::Container {
-        id: "header".into(),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container("header", Layout::Absolute, items)
 }
 
 fn title_for(recommend_type: &str, target: ResultTarget) -> &'static str {
@@ -902,11 +919,7 @@ fn event_box(h: &DeckResultHeader) -> WidgetNode {
         ));
     }
 
-    WidgetNode::Container {
-        id: "event_box".into(),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container("event_box", Layout::Absolute, items)
 }
 
 fn music_box(h: &DeckResultHeader) -> WidgetNode {
@@ -959,11 +972,7 @@ fn music_box(h: &DeckResultHeader) -> WidgetNode {
             tag("difficulty", diff.to_uppercase(), pal::BLACK_55, pal::MIKU),
         ));
     }
-    WidgetNode::Container {
-        id: "music_box".into(),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container("music_box", Layout::Absolute, items)
 }
 
 fn user_box(h: &DeckResultHeader) -> WidgetNode {
@@ -1044,11 +1053,7 @@ fn user_box(h: &DeckResultHeader) -> WidgetNode {
             pal::GRAY,
         ),
     ));
-    WidgetNode::Container {
-        id: "user_box".into(),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container("user_box", Layout::Absolute, items)
 }
 
 fn avatar_placeholder(name: &str) -> WidgetNode {
@@ -1057,10 +1062,10 @@ fn avatar_placeholder(name: &str) -> WidgetNode {
         .find(|ch| !ch.is_whitespace())
         .map(|ch| ch.to_string())
         .unwrap_or_else(|| "U".to_string());
-    WidgetNode::Container {
-        id: "avatar_placeholder".into(),
-        layout: Layout::Absolute,
-        children: vec![
+    container(
+        "avatar_placeholder",
+        Layout::Absolute,
+        vec![
             entry(
                 0.0,
                 0.0,
@@ -1087,7 +1092,7 @@ fn avatar_placeholder(name: &str) -> WidgetNode {
                 ),
             ),
         ],
-    }
+    )
 }
 
 fn mask_uid(uid: &str) -> String {
@@ -1158,11 +1163,7 @@ fn deck_panel(
         ));
     }
 
-    WidgetNode::Container {
-        id: format!("deck_panel_{}", deck.rank),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container(format!("deck_panel_{}", deck.rank), Layout::Absolute, items)
 }
 
 fn glass_variance(rank: usize, base: f32, spread: f32) -> f32 {
@@ -1249,11 +1250,7 @@ fn rank_panel(
         ),
     ));
 
-    WidgetNode::Container {
-        id: format!("rank_{}", deck.rank),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container(format!("rank_{}", deck.rank), Layout::Absolute, items)
 }
 
 fn deck_body(deck: &DeckRenderUnit, _is_top: bool, max_skill: f64, variance: f32) -> WidgetNode {
@@ -1280,20 +1277,14 @@ fn deck_body(deck: &DeckRenderUnit, _is_top: bool, max_skill: f64, variance: f32
 
     let mut cards = Vec::new();
     for (ci, card) in deck.cards.iter().take(5).enumerate() {
-        cards.push(ChildEntry {
-            position: pos(card_slot_x(ci), 0.0),
-            node: card_chip(card, deck.rank, ci),
-            visible: None,
-        });
+        let mut node = card_chip(card, deck.rank, ci);
+        node.position = pos(card_slot_x(ci), 0.0);
+        cards.push(node);
     }
     items.push(entry(
         layout::row::INNER_PAD_X,
         layout::row::INNER_PAD_Y,
-        WidgetNode::Container {
-            id: format!("cards_{}", deck.rank),
-            layout: Layout::Absolute,
-            children: cards,
-        },
+        container(format!("cards_{}", deck.rank), Layout::Absolute, cards),
     ));
 
     items.push(entry(
@@ -1302,11 +1293,7 @@ fn deck_body(deck: &DeckRenderUnit, _is_top: bool, max_skill: f64, variance: f32
         stats_panel(deck, max_skill),
     ));
 
-    WidgetNode::Container {
-        id: format!("deck_body_{}", deck.rank),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container(format!("deck_body_{}", deck.rank), Layout::Absolute, items)
 }
 
 fn card_chip(card: &DeckRenderCard, rank: usize, index: usize) -> WidgetNode {
@@ -1327,17 +1314,19 @@ fn card_chip(card: &DeckRenderCard, rank: usize, index: usize) -> WidgetNode {
         entry(
             layout::card::PAD,
             layout::card::PAD,
-            WidgetNode::CardThumbnail {
-                id: format!("thumb_{rank}_{index}"),
-                size: layout::card::IMAGE,
-                card_image_key: card.asset_key.clone(),
-                rarity: card.rarity.clone(),
-                attr: card.attr.clone(),
-                master_rank: card.master_rank,
-                trained: card.trained,
-                show_info: true,
-                level_text: format!("Lv.{}", card.level),
-            },
+            leaf(
+                format!("thumb_{rank}_{index}"),
+                NodeKind::CardThumbnail {
+                    size: layout::card::IMAGE,
+                    card_image_key: card.asset_key.clone(),
+                    rarity: card.rarity.clone(),
+                    attr: card.attr.clone(),
+                    master_rank: card.master_rank,
+                    trained: card.trained,
+                    show_info: true,
+                    level_text: format!("Lv.{}", card.level),
+                },
+            ),
         ),
         entry(
             layout::card::ID_X,
@@ -1390,11 +1379,7 @@ fn card_chip(card: &DeckRenderCard, rank: usize, index: usize) -> WidgetNode {
         ),
     ));
 
-    WidgetNode::Container {
-        id: format!("card_{rank}_{index}"),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container(format!("card_{rank}_{index}"), Layout::Absolute, items)
 }
 
 fn card_slot_x(index: usize) -> f32 {
@@ -1402,10 +1387,10 @@ fn card_slot_x(index: usize) -> f32 {
 }
 
 fn card_skill_row(card: &DeckRenderCard) -> WidgetNode {
-    WidgetNode::Container {
-        id: "card_skill".into(),
-        layout: Layout::Absolute,
-        children: vec![
+    container(
+        "card_skill",
+        Layout::Absolute,
+        vec![
             entry(
                 0.0,
                 0.0,
@@ -1437,7 +1422,7 @@ fn card_skill_row(card: &DeckRenderCard) -> WidgetNode {
                 ),
             ),
         ],
-    }
+    )
 }
 
 fn card_status_row(card: &DeckRenderCard) -> WidgetNode {
@@ -1446,12 +1431,12 @@ fn card_status_row(card: &DeckRenderCard) -> WidgetNode {
         .filter(|bonus| *bonus > 0.0)
         .map(|bonus| format!("+{}", fmt_pct(bonus)))
         .unwrap_or_else(|| "-".to_string());
-    WidgetNode::Container {
-        id: "card_status".into(),
-        layout: Layout::Horizontal {
+    container(
+        "card_status",
+        Layout::Horizontal {
             gap: layout::card::STATUS_GAP,
         },
-        children: vec![
+        vec![
             auto(status_badge(
                 "bonus",
                 bonus_text,
@@ -1463,7 +1448,7 @@ fn card_status_row(card: &DeckRenderCard) -> WidgetNode {
             auto(episode_badge("ep1", "前篇", card.episode1_read)),
             auto(episode_badge("ep2", "后篇", card.episode2_read)),
         ],
-    }
+    )
 }
 
 fn stats_panel(deck: &DeckRenderUnit, max_skill: f64) -> WidgetNode {
@@ -1511,19 +1496,15 @@ fn stats_panel(deck: &DeckRenderUnit, max_skill: f64) -> WidgetNode {
     let items = vec![entry(
         0.0,
         0.0,
-        WidgetNode::Container {
-            id: format!("stats_blocks_{}", deck.rank),
-            layout: Layout::Vertical {
+        container(
+            format!("stats_blocks_{}", deck.rank),
+            Layout::Vertical {
                 gap: layout::stats::BLOCK_GAP,
             },
-            children: blocks,
-        },
+            blocks,
+        ),
     )];
-    WidgetNode::Container {
-        id: format!("stats_{}", deck.rank),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container(format!("stats_{}", deck.rank), Layout::Absolute, items)
 }
 
 fn stat_block(
@@ -1567,20 +1548,18 @@ fn stat_block(
             ),
         ),
     ];
-    WidgetNode::Container {
-        id: format!("stat_{id}"),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container(format!("stat_{id}"), Layout::Absolute, items)
 }
 
 fn tag(id: &str, content: impl Into<String>, bg: Color, fg: Color) -> WidgetNode {
-    WidgetNode::TextBadge {
-        id: id.into(),
-        text: content.into(),
-        bg_color: bg,
-        text_color: fg,
-    }
+    leaf(
+        id,
+        NodeKind::TextBadge {
+            text: content.into(),
+            bg_color: bg,
+            text_color: fg,
+        },
+    )
 }
 
 fn small_badge(
@@ -1592,10 +1571,10 @@ fn small_badge(
     font_size: f32,
 ) -> WidgetNode {
     let content = content.into();
-    WidgetNode::Container {
-        id: id.into(),
-        layout: Layout::Absolute,
-        children: vec![
+    container(
+        id,
+        Layout::Absolute,
+        vec![
             entry(
                 0.0,
                 0.0,
@@ -1614,7 +1593,7 @@ fn small_badge(
                 ),
             ),
         ],
-    }
+    )
 }
 
 fn status_badge(
@@ -1626,10 +1605,10 @@ fn status_badge(
     font_size: f32,
 ) -> WidgetNode {
     let content = content.into();
-    WidgetNode::Container {
-        id: id.into(),
-        layout: Layout::Absolute,
-        children: vec![
+    container(
+        id,
+        Layout::Absolute,
+        vec![
             entry(
                 0.0,
                 0.0,
@@ -1648,7 +1627,7 @@ fn status_badge(
                 ),
             ),
         ],
-    }
+    )
 }
 
 fn episode_badge(id: &str, label: &str, read: bool) -> WidgetNode {
@@ -1657,10 +1636,10 @@ fn episode_badge(id: &str, label: &str, read: bool) -> WidgetNode {
     } else {
         (pal::RED_BG, pal::RED)
     };
-    WidgetNode::Container {
-        id: id.into(),
-        layout: Layout::Absolute,
-        children: vec![
+    container(
+        id,
+        Layout::Absolute,
+        vec![
             entry(
                 0.0,
                 0.0,
@@ -1687,7 +1666,7 @@ fn episode_badge(id: &str, label: &str, read: bool) -> WidgetNode {
                 ),
             ),
         ],
-    }
+    )
 }
 
 fn footer(
@@ -1821,20 +1800,16 @@ fn footer(
         }
     }
 
-    WidgetNode::Container {
-        id: "footer".into(),
-        layout: Layout::Absolute,
-        children: items,
-    }
+    container("footer", Layout::Absolute, items)
 }
 
 fn stage_chip(index: usize, stage: &DeckTimingStage, w: f32) -> WidgetNode {
     let accent = timing_tone_color(stage.tone.as_deref(), index);
     let detail = stage.detail.as_deref().unwrap_or("");
-    WidgetNode::Container {
-        id: format!("timing_stage_{index}"),
-        layout: Layout::Absolute,
-        children: vec![
+    container(
+        format!("timing_stage_{index}"),
+        Layout::Absolute,
+        vec![
             entry(
                 0.0,
                 0.0,
@@ -1890,7 +1865,7 @@ fn stage_chip(index: usize, stage: &DeckTimingStage, w: f32) -> WidgetNode {
                 ),
             ),
         ],
-    }
+    )
 }
 
 fn timing_tone_color(_tone: Option<&str>, _index: usize) -> Color {

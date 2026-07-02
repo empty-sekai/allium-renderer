@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::context::RenderContext;
 use crate::instantiate::instantiate;
-use crate::widget_node::{ChildEntry, Layout, OutputFormat, Position, WidgetDocument, WidgetNode};
+use crate::widget_node::{Layout, NodeKind, OutputFormat, Position, WidgetDocument, WidgetNode};
 
 /// 文档渲染结果。
 #[derive(Debug, Clone)]
@@ -39,7 +39,7 @@ pub struct RenderTiming {
 }
 
 impl RenderTiming {
-    #[cfg(feature = "skia-core")]
+    #[cfg(feature = "skia")]
     fn add_widget_draw(&mut self, widget_type: &str, duration: Duration) {
         let elapsed = elapsed_ms(duration);
         if let Some(existing) = self
@@ -125,7 +125,7 @@ pub enum DiagnosticCode {
     PositionIgnored,
 }
 
-#[cfg(any(test, not(feature = "skia-core")))]
+#[cfg(any(test, not(feature = "skia")))]
 #[derive(Debug, Clone, Serialize)]
 struct LayoutSnapshot {
     node_id: String,
@@ -162,10 +162,10 @@ pub fn render_document(doc: &WidgetDocument, ctx: &RenderContext<'_>) -> RenderR
         ..RenderTiming::default()
     };
 
-    #[cfg(feature = "skia-core")]
+    #[cfg(feature = "skia")]
     let image = render_document_skia(doc, ctx, &root, &mut timing);
 
-    #[cfg(not(feature = "skia-core"))]
+    #[cfg(not(feature = "skia"))]
     let image = {
         let encode_start = Instant::now();
         let image = render_document_snapshot(&root, doc);
@@ -184,30 +184,28 @@ pub fn render_document(doc: &WidgetDocument, ctx: &RenderContext<'_>) -> RenderR
 }
 
 fn measure_node(node: &WidgetNode, ctx: &RenderContext<'_>) -> (f32, f32) {
-    match node {
-        WidgetNode::Container {
-            layout, children, ..
-        } => measure_container(layout, children, ctx),
+    match &node.kind {
+        NodeKind::Container { layout, children } => measure_container(layout, children, ctx),
         _ => instantiate(node).measure(ctx),
     }
 }
 
 fn measure_container(
     layout: &Layout,
-    children: &[ChildEntry],
+    children: &[WidgetNode],
     ctx: &RenderContext<'_>,
 ) -> (f32, f32) {
     match layout {
         Layout::Absolute => children.iter().fold((0.0_f32, 0.0_f32), |acc, child| {
-            let (width, height) = measure_node(&child.node, ctx);
-            let pos = child.position.unwrap_or_default();
+            let (width, height) = measure_node(child, ctx);
+            let pos = child.position;
             (acc.0.max(pos.x + width), acc.1.max(pos.y + height))
         }),
         Layout::Horizontal { gap } => {
             let mut total_width = 0.0_f32;
             let mut max_height = 0.0_f32;
             for (index, child) in children.iter().enumerate() {
-                let (width, height) = measure_node(&child.node, ctx);
+                let (width, height) = measure_node(child, ctx);
                 if index > 0 {
                     total_width += *gap;
                 }
@@ -220,7 +218,7 @@ fn measure_container(
             let mut max_width = 0.0_f32;
             let mut total_height = 0.0_f32;
             for (index, child) in children.iter().enumerate() {
-                let (width, height) = measure_node(&child.node, ctx);
+                let (width, height) = measure_node(child, ctx);
                 if index > 0 {
                     total_height += *gap;
                 }
@@ -240,13 +238,9 @@ fn layout_node(
     let default_position = Position::default();
     let (width, height) = measure_node(node, ctx);
 
-    match node {
-        WidgetNode::Container {
-            id,
-            layout,
-            children,
-        } => {
-            let laid_out_children = layout_children(id, layout, children, ctx, diagnostics);
+    match &node.kind {
+        NodeKind::Container { layout, children } => {
+            let laid_out_children = layout_children(&node.id, layout, children, ctx, diagnostics);
             LaidOutNode {
                 x: 0.0,
                 y: 0.0,
@@ -276,7 +270,7 @@ fn layout_node(
 fn layout_children(
     _parent_id: &str,
     layout: &Layout,
-    children: &[ChildEntry],
+    children: &[WidgetNode],
     ctx: &RenderContext<'_>,
     diagnostics: &mut Vec<NodeDiagnostic>,
 ) -> Vec<LaidOutNode> {
@@ -284,13 +278,13 @@ fn layout_children(
         Layout::Absolute => children
             .iter()
             .map(|child| {
-                let mut node = layout_node(&child.node, ctx, diagnostics);
-                let position = child.position.unwrap_or_default();
+                let mut node = layout_node(child, ctx, diagnostics);
+                let position = child.position;
                 node.x = position.x;
                 node.y = position.y;
                 node.rotation = position.rotation;
                 node.scale = position.scale;
-                node.visible = child.visible.unwrap_or(true);
+                node.visible = child.visible;
                 node
             })
             .collect(),
@@ -299,21 +293,21 @@ fn layout_children(
             children
                 .iter()
                 .map(|child| {
-                    if child.position.is_some() {
+                    if !child.position.is_default() {
                         diagnostics.push(NodeDiagnostic {
-                            node_id: child.node.id().to_string(),
+                            node_id: child.id.clone(),
                             severity: Severity::Warning,
                             code: DiagnosticCode::PositionIgnored,
                             message: format!(
                                 "节点 {} 在 horizontal 布局中忽略了 position",
-                                child.node.id()
+                                child.id
                             ),
                         });
                     }
-                    let mut node = layout_node(&child.node, ctx, diagnostics);
+                    let mut node = layout_node(child, ctx, diagnostics);
                     node.x = cursor_x;
                     cursor_x += node.width + *gap;
-                    node.visible = child.visible.unwrap_or(true);
+                    node.visible = child.visible;
                     node
                 })
                 .collect::<Vec<_>>()
@@ -323,21 +317,21 @@ fn layout_children(
             children
                 .iter()
                 .map(|child| {
-                    if child.position.is_some() {
+                    if !child.position.is_default() {
                         diagnostics.push(NodeDiagnostic {
-                            node_id: child.node.id().to_string(),
+                            node_id: child.id.clone(),
                             severity: Severity::Warning,
                             code: DiagnosticCode::PositionIgnored,
                             message: format!(
                                 "节点 {} 在 vertical 布局中忽略了 position",
-                                child.node.id()
+                                child.id
                             ),
                         });
                     }
-                    let mut node = layout_node(&child.node, ctx, diagnostics);
+                    let mut node = layout_node(child, ctx, diagnostics);
                     node.y = cursor_y;
                     cursor_y += node.height + *gap;
-                    node.visible = child.visible.unwrap_or(true);
+                    node.visible = child.visible;
                     node
                 })
                 .collect::<Vec<_>>()
@@ -345,7 +339,7 @@ fn layout_children(
     }
 }
 
-#[cfg(not(feature = "skia-core"))]
+#[cfg(not(feature = "skia"))]
 fn render_document_snapshot(root: &LaidOutNode, doc: &WidgetDocument) -> Vec<u8> {
     let snapshot = serde_json::json!({
         "canvas": {
@@ -357,7 +351,7 @@ fn render_document_snapshot(root: &LaidOutNode, doc: &WidgetDocument) -> Vec<u8>
     serde_json::to_vec(&snapshot).unwrap_or_else(|_| b"{\"render\":\"snapshot\"}".to_vec())
 }
 
-#[cfg(feature = "skia-core")]
+#[cfg(feature = "skia")]
 fn render_document_skia(
     doc: &WidgetDocument,
     ctx: &RenderContext<'_>,
@@ -406,7 +400,7 @@ fn render_document_skia(
     encoded
 }
 
-#[cfg(feature = "skia-core")]
+#[cfg(feature = "skia")]
 fn draw_node(
     canvas: &skia_safe::Canvas,
     node: &LaidOutNode,
@@ -417,8 +411,8 @@ fn draw_node(
     canvas.translate((node.x, node.y));
     apply_transform(canvas, node.width, node.height, node.rotation, node.scale);
 
-    match &node.node {
-        WidgetNode::Container { .. } => {
+    match &node.node.kind {
+        NodeKind::Container { .. } => {
             for child in &node.children {
                 if !child.visible {
                     continue;
@@ -441,7 +435,7 @@ fn elapsed_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
 }
 
-#[cfg(feature = "skia-core")]
+#[cfg(feature = "skia")]
 fn apply_transform(
     canvas: &skia_safe::Canvas,
     width: f32,
@@ -471,10 +465,10 @@ fn apply_transform(
     canvas.scale(scale);
 }
 
-#[cfg(any(test, not(feature = "skia-core")))]
+#[cfg(any(test, not(feature = "skia")))]
 fn snapshot_node(node: &LaidOutNode) -> LayoutSnapshot {
     LayoutSnapshot {
-        node_id: node.node.id().to_string(),
+        node_id: node.node.id.clone(),
         node_type: node.node.type_name().to_string(),
         x: node.x,
         y: node.y,
@@ -492,8 +486,8 @@ mod tests {
     use crate::assets::AssetStore;
     use crate::context::RenderContext;
     use crate::widget_node::{
-        CanvasSpec, ChildEntry, Layout, OutputFormat, Position, TextAlignValue, VAlignValue,
-        WidgetDocument, WidgetNode,
+        CanvasSpec, Layout, NodeKind, OutputFormat, Position, TextAlignValue, VAlignValue,
+        WidgetDocument, WidgetNode, WIDGET_DOCUMENT_SCHEMA_VERSION,
     };
     use crate::widgets::theme::{Color, Theme};
 
@@ -503,40 +497,58 @@ mod tests {
         RenderContext::new(assets, theme)
     }
 
+    fn leaf(id: &str, kind: NodeKind) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            position: Position::default(),
+            visible: true,
+            kind,
+        }
+    }
+
+    fn at(id: &str, position: Position, kind: NodeKind) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            position,
+            visible: true,
+            kind,
+        }
+    }
+
     #[test]
     fn horizontal_layout_respects_gap() {
         let document = WidgetDocument {
-            version: 1,
+            version: WIDGET_DOCUMENT_SCHEMA_VERSION,
             canvas: CanvasSpec {
                 width: 400,
                 height: 200,
                 background: Color::new(0.0, 0.0, 0.0, 1.0),
             },
-            root: WidgetNode::Container {
+            root: WidgetNode {
                 id: "root".to_string(),
-                layout: Layout::Horizontal { gap: 10.0 },
-                children: vec![
-                    ChildEntry {
-                        position: None,
-                        node: WidgetNode::GlassPanel {
-                            id: "a".to_string(),
-                            width: 20.0,
-                            height: 10.0,
-                            clip_variance: 0.0,
-                        },
-                        visible: None,
-                    },
-                    ChildEntry {
-                        position: None,
-                        node: WidgetNode::GlassPanel {
-                            id: "b".to_string(),
-                            width: 30.0,
-                            height: 10.0,
-                            clip_variance: 0.0,
-                        },
-                        visible: None,
-                    },
-                ],
+                position: Position::default(),
+                visible: true,
+                kind: NodeKind::Container {
+                    layout: Layout::Horizontal { gap: 10.0 },
+                    children: vec![
+                        leaf(
+                            "a",
+                            NodeKind::GlassPanel {
+                                width: 20.0,
+                                height: 10.0,
+                                clip_variance: 0.0,
+                            },
+                        ),
+                        leaf(
+                            "b",
+                            NodeKind::GlassPanel {
+                                width: 30.0,
+                                height: 10.0,
+                                clip_variance: 0.0,
+                            },
+                        ),
+                    ],
+                },
             },
             output: OutputFormat::Png,
         };
@@ -553,37 +565,40 @@ mod tests {
     #[test]
     fn flow_layout_reports_ignored_position() {
         let document = WidgetDocument {
-            version: 1,
+            version: WIDGET_DOCUMENT_SCHEMA_VERSION,
             canvas: CanvasSpec {
                 width: 400,
                 height: 200,
                 background: Color::new(0.0, 0.0, 0.0, 1.0),
             },
-            root: WidgetNode::Container {
+            root: WidgetNode {
                 id: "root".to_string(),
-                layout: Layout::Vertical { gap: 8.0 },
-                children: vec![ChildEntry {
-                    position: Some(Position {
-                        x: 99.0,
-                        y: 88.0,
-                        rotation: 0.0,
-                        scale: (1.0, 1.0),
-                    }),
-                    node: WidgetNode::SimpleText {
-                        id: "text".to_string(),
-                        content: "demo".to_string(),
-                        font_size: 16.0,
-                        color: Color::new(1.0, 1.0, 1.0, 1.0),
-                        width: 260.0,
-                        height: 72.0,
-                        align: TextAlignValue::Left,
-                        v_align: VAlignValue::Top,
-                        padding: 4.0,
-                        line_height: 1.2,
-                        glow: false,
-                    },
-                    visible: None,
-                }],
+                position: Position::default(),
+                visible: true,
+                kind: NodeKind::Container {
+                    layout: Layout::Vertical { gap: 8.0 },
+                    children: vec![at(
+                        "text",
+                        Position {
+                            x: 99.0,
+                            y: 88.0,
+                            rotation: 0.0,
+                            scale: (1.0, 1.0),
+                        },
+                        NodeKind::SimpleText {
+                            content: "demo".to_string(),
+                            font_size: 16.0,
+                            color: Color::new(1.0, 1.0, 1.0, 1.0),
+                            width: 260.0,
+                            height: 72.0,
+                            align: TextAlignValue::Left,
+                            v_align: VAlignValue::Top,
+                            padding: 4.0,
+                            line_height: 1.2,
+                            glow: false,
+                        },
+                    )],
+                },
             },
             output: OutputFormat::Png,
         };
@@ -597,54 +612,56 @@ mod tests {
     #[test]
     fn render_document_returns_non_empty_bytes() {
         let document = WidgetDocument {
-            version: 1,
+            version: WIDGET_DOCUMENT_SCHEMA_VERSION,
             canvas: CanvasSpec {
                 width: 320,
                 height: 180,
                 background: Color::new(0.1, 0.1, 0.1, 1.0),
             },
-            root: WidgetNode::Container {
+            root: WidgetNode {
                 id: "root".to_string(),
-                layout: Layout::Absolute,
-                children: vec![
-                    ChildEntry {
-                        position: Some(Position {
-                            x: 12.0,
-                            y: 16.0,
-                            rotation: 0.0,
-                            scale: (1.0, 1.0),
-                        }),
-                        node: WidgetNode::GlassPanel {
-                            id: "panel".to_string(),
-                            width: 120.0,
-                            height: 64.0,
-                            clip_variance: 0.0,
-                        },
-                        visible: None,
-                    },
-                    ChildEntry {
-                        position: Some(Position {
-                            x: 24.0,
-                            y: 28.0,
-                            rotation: 0.0,
-                            scale: (1.0, 1.0),
-                        }),
-                        node: WidgetNode::SimpleText {
-                            id: "title".to_string(),
-                            content: "hello".to_string(),
-                            font_size: 18.0,
-                            color: Color::new(1.0, 1.0, 1.0, 1.0),
-                            width: 260.0,
-                            height: 72.0,
-                            align: TextAlignValue::Left,
-                            v_align: VAlignValue::Top,
-                            padding: 4.0,
-                            line_height: 1.2,
-                            glow: false,
-                        },
-                        visible: None,
-                    },
-                ],
+                position: Position::default(),
+                visible: true,
+                kind: NodeKind::Container {
+                    layout: Layout::Absolute,
+                    children: vec![
+                        at(
+                            "panel",
+                            Position {
+                                x: 12.0,
+                                y: 16.0,
+                                rotation: 0.0,
+                                scale: (1.0, 1.0),
+                            },
+                            NodeKind::GlassPanel {
+                                width: 120.0,
+                                height: 64.0,
+                                clip_variance: 0.0,
+                            },
+                        ),
+                        at(
+                            "title",
+                            Position {
+                                x: 24.0,
+                                y: 28.0,
+                                rotation: 0.0,
+                                scale: (1.0, 1.0),
+                            },
+                            NodeKind::SimpleText {
+                                content: "hello".to_string(),
+                                font_size: 18.0,
+                                color: Color::new(1.0, 1.0, 1.0, 1.0),
+                                width: 260.0,
+                                height: 72.0,
+                                align: TextAlignValue::Left,
+                                v_align: VAlignValue::Top,
+                                padding: 4.0,
+                                line_height: 1.2,
+                                glow: false,
+                            },
+                        ),
+                    ],
+                },
             },
             output: OutputFormat::Png,
         };

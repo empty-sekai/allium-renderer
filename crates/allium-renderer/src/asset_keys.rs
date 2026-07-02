@@ -298,15 +298,15 @@ pub fn collect_document_asset_keys(document: &crate::widget_node::WidgetDocument
 }
 
 fn collect_node_asset_keys(node: &crate::widget_node::WidgetNode, keys: &mut Vec<String>) {
-    match node {
-        crate::widget_node::WidgetNode::AssetImage { asset_key, .. } => {
+    match &node.kind {
+        crate::widget_node::NodeKind::AssetImage { asset_key, .. } => {
             if !asset_key.is_empty() {
                 keys.push(asset_key.clone());
             }
         }
-        crate::widget_node::WidgetNode::Container { children, .. } => {
+        crate::widget_node::NodeKind::Container { children, .. } => {
             for child in children {
-                collect_node_asset_keys(&child.node, keys);
+                collect_node_asset_keys(child, keys);
             }
         }
         _ => {}
