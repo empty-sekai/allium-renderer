@@ -175,6 +175,8 @@ jobs:
                 freetype-static git gn libpng-static ninja openssl-dev perl \
                 pkgconfig python3 xz zlib-static
               PKG_CONFIG_ALL_STATIC=1 \
+              SKIA_GN_COMMAND=gn \
+              SKIA_NINJA_COMMAND=ninja \
               RUSTFLAGS="-C target-feature=+crt-static" \
               cargo build --release -p allium-renderer-cli \
                 --target x86_64-unknown-linux-musl
