@@ -714,7 +714,7 @@ fn render_char_face_from_outline(
     let local_rect = glyph_plane_rect(glyph, pos, logical_scale);
     let shader = compute_shader_params(canvas, carrier, 0.0, fx_scale_x);
     let _ = (shader.uv2_y, shader.pixel_scale);
-    rasterize_local_rect_to_device(
+    let _painted = rasterize_local_rect_to_device(
         canvas,
         local_rect,
         1,
@@ -735,7 +735,10 @@ fn render_char_face_from_outline(
                 face_alpha * vertex_alpha,
             ])
         },
-    )
+    );
+    // A valid SDF glyph can be completely outside the canvas or current clip.
+    // Culling is a handled SDF result, not a reason to switch rendering backends.
+    true
 }
 
 /// 兼容旧调用名；正式路径只走轮廓动态 SDF。
@@ -830,7 +833,7 @@ fn render_char_sdf_from_outline(
     let f_g = face_color.g * f_a;
     let f_b = face_color.b * f_a;
 
-    rasterize_local_rect_to_device(
+    let _painted = rasterize_local_rect_to_device(
         canvas,
         local_rect,
         pad_px,
@@ -866,7 +869,9 @@ fn render_char_sdf_from_outline(
                 out_a * vertex_alpha,
             ])
         },
-    )
+    );
+    // Preserve the SDF-only contract when the glyph is valid but fully culled.
+    true
 }
 
 /// 统一入口。
