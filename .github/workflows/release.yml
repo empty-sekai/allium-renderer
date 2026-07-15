@@ -64,10 +64,6 @@ jobs:
             os: macos-15
             target: aarch64-apple-darwin
             archive: allium-renderer-macos-aarch64.tar.xz
-          - platform: macos-x86_64
-            os: macos-15-intel
-            target: x86_64-apple-darwin
-            archive: allium-renderer-macos-x86_64.tar.xz
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -150,51 +146,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-linux-aarch64-gnu
-          path: ${{ env.ARCHIVE }}
-          if-no-files-found: error
-
-  build-linux-musl:
-    name: build linux-x86_64-musl
-    needs: test
-    runs-on: ubuntu-latest
-    env:
-      ARCHIVE: allium-renderer-linux-x86_64-musl.tar.xz
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Skia-enabled musl binary in Alpine
-        run: |
-          docker run --rm \
-            --volume "${GITHUB_WORKSPACE}:/workspace" \
-            --workdir /workspace \
-            rust:1.88-alpine3.22 \
-            sh -euxc '
-              apk add --no-cache \
-                binutils brotli-static build-base bzip2-static clang clang-dev cmake \
-                curl expat-static file fontconfig-dev fontconfig-static freetype-dev \
-                freetype-static git gn libpng-static ninja openssl-dev perl \
-                pkgconfig python3 xz zlib-static
-              PKG_CONFIG_ALL_STATIC=1 \
-              LIBCLANG_PATH=/usr/lib \
-              SKIA_GN_COMMAND=gn \
-              SKIA_NINJA_COMMAND=ninja \
-              RUSTFLAGS="-C target-feature=+crt-static" \
-              cargo build --release -p allium-renderer-cli \
-                --target x86_64-unknown-linux-musl
-              binary=target/x86_64-unknown-linux-musl/release/render-card
-              file "$binary"
-              if readelf -l "$binary" | grep -q "Requesting program interpreter"; then
-                echo "musl release binary is dynamically linked" >&2
-                exit 1
-              fi
-              tar -cJf allium-renderer-linux-x86_64-musl.tar.xz \
-                -C target/x86_64-unknown-linux-musl/release render-card
-            '
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-linux-x86_64-musl
           path: ${{ env.ARCHIVE }}
           if-no-files-found: error
 
@@ -329,7 +280,6 @@ jobs:
     needs:
       - build-native
       - build-linux-arm64
-      - build-linux-musl
       - wasm
       - pages
     if: startsWith(github.ref, 'refs/tags/v')
@@ -365,11 +315,9 @@ jobs:
             -exec cp -v '{}' dist/ \;
           for asset in \
             allium-renderer-linux-x86_64-gnu.tar.xz \
-            allium-renderer-linux-x86_64-musl.tar.xz \
             allium-renderer-linux-aarch64-gnu.tar.xz \
             allium-renderer-windows-x86_64.zip \
-            allium-renderer-macos-aarch64.tar.xz \
-            allium-renderer-macos-x86_64.tar.xz; do
+            allium-renderer-macos-aarch64.tar.xz; do
             test -f "dist/${asset}"
           done
           # Preserve the complete browser dist tree, including third-party notices.

@@ -24,7 +24,6 @@ test("wasm release job runs every browser release gate", async () => {
   assert.match(workflow, /node-version: '24'/);
   assert.match(workflow, /npm ci --no-audit --no-fund/);
   assert.match(workflow, /os: macos-15\s/);
-  assert.match(workflow, /os: macos-15-intel\s/);
 
   for (const command of [
     "npm run test:gates",
@@ -72,32 +71,24 @@ test("native release matrix covers every supported platform with checksums", asy
 
   for (const target of [
     "x86_64-unknown-linux-gnu",
-    "x86_64-unknown-linux-musl",
     "aarch64-unknown-linux-gnu",
     "x86_64-pc-windows-msvc",
     "aarch64-apple-darwin",
-    "x86_64-apple-darwin",
   ]) {
     assert.match(workflow, new RegExp(target));
   }
 
   for (const archive of [
     "allium-renderer-linux-x86_64-gnu.tar.xz",
-    "allium-renderer-linux-x86_64-musl.tar.xz",
     "allium-renderer-linux-aarch64-gnu.tar.xz",
     "allium-renderer-windows-x86_64.zip",
     "allium-renderer-macos-aarch64.tar.xz",
-    "allium-renderer-macos-x86_64.tar.xz",
   ]) {
     assert.match(workflow, new RegExp(archive.replaceAll(".", "\\.")));
   }
 
   assert.match(workflow, /sha256sum \.\/\* > SHA256SUMS/);
   assert.match(workflow, /runs-on: ubuntu-24\.04-arm/);
-  assert.match(workflow, /rust:1\.88-alpine3\.22/);
-  assert.match(workflow, /PKG_CONFIG_ALL_STATIC=1/);
-  assert.match(workflow, /target-feature=\+crt-static/);
-  assert.match(workflow, /musl release binary is dynamically linked/);
 });
 
 test("manual dispatch never publishes npm or creates a GitHub Release", async () => {
