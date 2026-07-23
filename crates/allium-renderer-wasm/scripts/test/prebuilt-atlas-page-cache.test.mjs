@@ -18,7 +18,9 @@ test("decoded prebuilt atlas pages are reused per provider with a bounded cache"
 test("origin atlas installation is explicit, bounded, and falls back when storage is unavailable", () => {
   assert.match(originPackage, /async manifest\(family, \{ signal \}\)/);
   assert.match(originPackage, /if \(!storage\.available\) return null/);
-  assert.match(originPackage, /await assertStorageQuota\(totalBytes\)/);
+  assert.doesNotMatch(originPackage, /page\.width \* page\.height/);
+  assert.match(originPackage, /await assertStorageQuota\(buffer\.byteLength\)/);
+  assert.match(originPackage, /if \(!isQuotaExceededError\(error\)\) throw error/);
   assert.match(originPackage, /if \(installOptions\.requestPersistence\) await requestOriginPersistence\(\)/);
   assert.match(originPackage, /await storage\.putManifests/);
   assert.match(originPackage, /await storage\.remove\(namespace, missing\)\.catch/);

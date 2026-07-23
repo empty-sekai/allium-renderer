@@ -162,9 +162,6 @@ export function createOriginPrebuiltSdfAtlasPackage(options: {
       }
 
       const totalPages = [...manifests.values()].reduce((sum, manifest) => sum + manifest.pages.length, 0);
-      const totalBytes = [...manifests.values()].flatMap((manifest) => manifest.pages)
-        .reduce((sum, page) => sum + 64 + page.width * page.height, 0);
-      await assertStorageQuota(totalBytes);
       if (installOptions.requestPersistence) await requestOriginPersistence();
 
       await storage.remove(namespace, missing);
@@ -182,15 +179,21 @@ export function createOriginPrebuiltSdfAtlasPackage(options: {
             if (signal.aborted) throw abortReason(signal);
             const buffer = await options.source.page(task.family, task.page.file, { signal });
             await assertPageHash(buffer, task.page.file_sha256, task.family, task.page.file);
-            await storage.putPage({
-              key: pageKey(namespace, task.family, task.page.file, task.page.file_sha256),
-              kind: "page",
-              namespace,
-              family: task.family,
-              file: task.page.file,
-              sha256: task.page.file_sha256,
-              bytes: buffer,
-            });
+            await assertStorageQuota(buffer.byteLength);
+            try {
+              await storage.putPage({
+                key: pageKey(namespace, task.family, task.page.file, task.page.file_sha256),
+                kind: "page",
+                namespace,
+                family: task.family,
+                file: task.page.file,
+                sha256: task.page.file_sha256,
+                bytes: buffer,
+              });
+            } catch (error) {
+              if (!isQuotaExceededError(error)) throw error;
+              throw storageQuotaError(buffer.byteLength, 0);
+            }
             completedPages += 1;
             storedBytes += buffer.byteLength;
             familyBytes.set(task.family, (familyBytes.get(task.family) ?? 0) + buffer.byteLength);
@@ -199,7 +202,7 @@ export function createOriginPrebuiltSdfAtlasPackage(options: {
               completedPages,
               totalPages,
               storedBytes,
-              totalBytes,
+              totalBytes: storedBytes,
             });
           }
         }));
@@ -343,11 +346,21 @@ async function assertStorageQuota(requiredBytes: number): Promise<void> {
   if (estimate.quota == null || estimate.usage == null) return;
   const available = Math.max(0, estimate.quota - estimate.usage);
   if (requiredBytes > available) {
-    throw new PrebuiltSdfAtlasStorageError(
-      "PREBUILT_ATLAS_QUOTA",
-      `prebuilt atlas requires ${requiredBytes} bytes but only ${available} bytes are available`,
-    );
+    throw storageQuotaError(requiredBytes, available);
   }
+}
+
+function isQuotaExceededError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "QuotaExceededError"
+    : error instanceof Error && error.name === "QuotaExceededError";
+}
+
+function storageQuotaError(requiredBytes: number, availableBytes: number): PrebuiltSdfAtlasStorageError {
+  return new PrebuiltSdfAtlasStorageError(
+    "PREBUILT_ATLAS_QUOTA",
+    `prebuilt atlas page requires ${requiredBytes} bytes but only ${availableBytes} bytes are available`,
+  );
 }
 
 async function requestOriginPersistence(): Promise<void> {
