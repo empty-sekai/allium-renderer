@@ -4062,21 +4062,44 @@ mod tests {
             &command.payload,
             SemanticCommandPayload::Image { resource, .. } if resource.key == "other/resolved"
         )));
-        for kind in [AuthoredElementKind::Honor, AuthoredElementKind::BondsHonor] {
-            let layer = resolved
-                .layers
-                .iter()
-                .find(|layer| layer.authored_kind == kind)
-                .unwrap();
-            assert!(resolved
-                .commands
-                .iter()
-                .filter(|command| command.layer_id == layer.id)
-                .all(|command| !matches!(
-                    command.payload,
-                    SemanticCommandPayload::Composite { .. }
-                )));
-        }
+        let honor_layer = resolved
+            .layers
+            .iter()
+            .find(|layer| layer.authored_kind == AuthoredElementKind::Honor)
+            .unwrap();
+        assert!(resolved
+            .commands
+            .iter()
+            .filter(|command| command.layer_id == honor_layer.id)
+            .all(|command| !matches!(command.payload, SemanticCommandPayload::Composite { .. })));
+        let bonds_layer = resolved
+            .layers
+            .iter()
+            .find(|layer| layer.authored_kind == AuthoredElementKind::BondsHonor)
+            .unwrap();
+        let bonds_composites = resolved
+            .commands
+            .iter()
+            .filter(|command| {
+                command.layer_id == bonds_layer.id
+                    && matches!(command.payload, SemanticCommandPayload::Composite { .. })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bonds_composites.len(), 2);
+        assert!(matches!(
+            bonds_composites[0].payload,
+            SemanticCommandPayload::Composite {
+                operation: CompositeOperation::BeginIsolation,
+                ..
+            }
+        ));
+        assert!(matches!(
+            bonds_composites[1].payload,
+            SemanticCommandPayload::Composite {
+                operation: CompositeOperation::EndIsolation,
+                ..
+            }
+        ));
         let other_layer = resolved
             .layers
             .iter()

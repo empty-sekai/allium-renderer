@@ -2208,6 +2208,33 @@ mod tests {
         .unwrap();
         assert_eq!(scene.layers.len(), 12);
         assert!(scene.commands.len() > 12);
+        let bonds_commands = scene
+            .commands
+            .iter()
+            .filter(|command| command.role.starts_with("bonds-2-"))
+            .collect::<Vec<_>>();
+        let bonds_roles = bonds_commands
+            .iter()
+            .map(|command| command.role.as_str())
+            .collect::<Vec<_>>();
+        let begin = bonds_roles
+            .iter()
+            .position(|role| *role == "bonds-2-isolation-begin")
+            .unwrap();
+        let mask = bonds_roles
+            .iter()
+            .position(|role| *role == "bonds-2-mask")
+            .unwrap();
+        let end = bonds_roles
+            .iter()
+            .position(|role| *role == "bonds-2-isolation-end")
+            .unwrap();
+        assert!(begin < mask && mask < end);
+        assert_eq!(bonds_commands[mask].blend_mode, crate::BlendMode::DstIn);
+        assert!(bonds_commands.iter().all(|command| match &command.payload {
+            crate::SemanticCommandPayload::Image { alpha_mask, .. } => alpha_mask.is_none(),
+            _ => true,
+        }));
         assert!(scene.controls.iter().any(|control| matches!(
             &control.state,
             crate::profile_scene::ComponentControlState::Tabs { .. }

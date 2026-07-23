@@ -922,6 +922,21 @@ fn lower_honor_visual(
             star_high,
             ..
         } => {
+            let group_bounds = Rect {
+                x: origin_x - w / 2.0,
+                y: origin_y - h / 2.0,
+                width: w,
+                height: h,
+            };
+            commands.push(composite_command(
+                source_key,
+                layer_id,
+                &format!("bonds-{}-isolation-begin", honor.honor_id),
+                *ordinal,
+                group_bounds,
+                crate::CompositeOperation::BeginIsolation,
+            ));
+            *ordinal += 1;
             for (index, background) in backgrounds.iter().enumerate() {
                 let Some(background) = background else {
                     continue;
@@ -955,7 +970,7 @@ fn lower_honor_visual(
                     background,
                     bounds,
                     Some(uv),
-                    mask.as_ref().map(|value| &value.resource),
+                    None,
                 ));
                 *ordinal += 1;
             }
@@ -998,10 +1013,34 @@ fn lower_honor_visual(
                     character,
                     bounds,
                     Some(uv),
-                    mask.as_ref().map(|value| &value.resource),
+                    None,
                 ));
                 *ordinal += 1;
             }
+            if let Some(mask) = mask {
+                let mut command = descriptor_image_command(
+                    source_key,
+                    layer_id,
+                    &format!("bonds-{}-mask", honor.honor_id),
+                    *ordinal,
+                    mask,
+                    group_bounds,
+                    None,
+                    None,
+                );
+                command.blend_mode = crate::BlendMode::DstIn;
+                commands.push(command);
+                *ordinal += 1;
+            }
+            commands.push(composite_command(
+                source_key,
+                layer_id,
+                &format!("bonds-{}-isolation-end", honor.honor_id),
+                *ordinal,
+                group_bounds,
+                crate::CompositeOperation::EndIsolation,
+            ));
+            *ordinal += 1;
             if let Some(frame) = frame {
                 let frame_bounds = Rect {
                     x: origin_x - frame.natural_width / 2.0,
@@ -1669,6 +1708,29 @@ fn descriptor_image_command(
             *target_uv = uv;
         }
         *target_mask = alpha_mask.cloned();
+    }
+    command
+}
+
+fn composite_command(
+    source_key: &str,
+    layer_id: StableId,
+    role: &str,
+    ordinal: u32,
+    bounds: Rect,
+    operation: crate::CompositeOperation,
+) -> SemanticCommandSource {
+    let mut command = SemanticCommandSource::composite(
+        semantic_command_id(source_key, role, ordinal),
+        layer_id,
+        role,
+        bounds,
+    );
+    if let SemanticCommandPayload::Composite {
+        operation: target, ..
+    } = &mut command.payload
+    {
+        *target = operation;
     }
     command
 }
